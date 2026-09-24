@@ -529,6 +529,12 @@ def send_telegram(cfg, text):
             time.sleep(r.json().get("parameters", {}).get("retry_after", 3))
             continue
         if r.ok:
+            # Log where Telegram actually delivered it, so a wrong TELEGRAM_CHAT_ID is visible.
+            result = r.json().get("result", {})
+            chat = result.get("chat", {})
+            name = chat.get("title") or chat.get("first_name") or chat.get("username") or "?"
+            logger.info("Telegram delivered to %s '%s' (topic: %s)", chat.get("type", "?"), name,
+                        result.get("message_thread_id", "-"))
             return
         raise RuntimeError(f"Telegram sendMessage failed: HTTP {r.status_code} {r.text[:300]}")
     raise RuntimeError("Telegram sendMessage rate-limited repeatedly")

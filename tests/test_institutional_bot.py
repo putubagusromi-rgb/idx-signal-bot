@@ -178,3 +178,20 @@ def test_hold_report_names_free_source(cfg, monkeypatch):
     monkeypatch.setattr(b, "download_history", lambda syms: {b.IHSG_SYMBOL: ihsg})
     msgs = b.run(cfg, datetime(2026, 9, 23, 16, 15, tzinfo=b.WIB), None)
     assert "DITAHAN" in msgs[0] and "proxy gratis" in msgs[0] and "Index Alpha" not in msgs[0]
+
+
+def test_send_telegram_logs_destination(cfg, monkeypatch, caplog):
+    class Resp:
+        ok, status_code = True, 200
+
+        def json(self):
+            return {"ok": True, "result": {"chat": {"type": "supergroup", "title": "IDX Traders"},
+                                           "message_thread_id": 7}}
+
+    sent = {}
+    monkeypatch.setattr(b.requests, "post", lambda url, json, timeout: sent.update(json) or Resp())
+    cfg = dataclasses.replace(cfg, telegram_token="x", telegram_chat_id="-1001:7")
+    with caplog.at_level("INFO", logger="institutional_bot"):
+        b.send_telegram(cfg, "hi")
+    assert sent["chat_id"] == "-1001" and sent["message_thread_id"] == 7
+    assert "supergroup 'IDX Traders' (topic: 7)" in caplog.text
