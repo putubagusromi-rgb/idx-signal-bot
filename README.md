@@ -316,6 +316,7 @@ git commit -m "ci: enable institutional bot workflow" && git push
 1. Tab **Actions → Institutional IDX Signal Bot → Run workflow**.
 2. Centang **Dry run** untuk melihat pesan di log tanpa mengirim ke Telegram; jalankan lagi tanpa centang untuk kirim sungguhan.
 3. Lokal: `INDEX_ALPHA_API_KEY=... python institutional_bot.py --dry-run`.
+4. Unit test offline (tanpa API): `pip install pytest && python -m pytest tests/`.
 
 Parameter lain bisa diubah lewat env: `RISK_PER_TRADE_PCT`, `ADTV_MIN_RP`, `RVOL_MIN`, `ATR_SL_MULT`, `TP1_RR`, `TP2_RR`, `FOREIGN_LOOKBACK_DAYS`, `FOREIGN_MIN_STREAK`, `BROKER_TOP_N`, `BROKER_MIN_SHARE_PCT`, `MAX_SIGNALS`, `SEND_EMPTY_REPORT`, `UNIVERSE` (daftar ticker dipisah koma; default universe dari `scanner.py`).
 
