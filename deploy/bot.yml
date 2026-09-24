@@ -1,0 +1,54 @@
+name: Institutional IDX Signal Bot
+
+on:
+  schedule:
+    # GitHub cron is UTC. WIB = UTC+7. Runs Mon–Fri; IDX holidays are skipped by the script.
+    - cron: '5 5 * * 1-5'    # 12:05 WIB — Sesi I close
+    - cron: '15 9 * * 1-5'   # 16:15 WIB — Sesi II close
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (print to log, do not send to Telegram)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: institutional-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run institutional scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          INDEX_ALPHA_API_KEY: ${{ secrets.INDEX_ALPHA_API_KEY }}
+          PORTFOLIO_CAPITAL: ${{ secrets.PORTFOLIO_CAPITAL }}
+          BEAR_MODE: ${{ vars.BEAR_MODE }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python institutional_bot.py --dry-run
+          else
+            python institutional_bot.py
+          fi
