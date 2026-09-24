@@ -3,3 +3,5 @@ numpy
 python-telegram-bot[job-queue]
 pytz
 curl_cffi
+yfinance
+requests

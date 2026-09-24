@@ -278,12 +278,58 @@ Note: Railway's free trial expired for this project in Aug 2026 — the bot move
 
 ---
 
+## Institutional Signal Bot (GitHub Actions, gratis)
+
+`institutional_bot.py` adalah scanner terpisah yang berjalan sekali jalan (tanpa VPS) lewat GitHub Actions pada **12:05 WIB** (tutup Sesi I) dan **16:15 WIB** (tutup Sesi II), Senin–Jumat. Hari libur IDX otomatis dilewati (tidak ada bar IHSG hari itu).
+
+| Gate | Sumber | Aturan |
+|------|--------|--------|
+| 1. Macro | yfinance `^JKSE` | IHSG < EMA50 → HIGH-RISK. Default `BEAR_MODE=hold` (signal ditahan, hanya laporan); `warn` = tetap kirim dengan label high-risk |
+| 2. Teknikal | yfinance | ADTV 5 hari > Rp10 M, RVOL ≥ 2x (vs rerata 20 hari), harga > EMA20 & EMA50, ATR14 > ATR14 5 hari lalu dan > rerata 20 hari |
+| 3. Smart money | [Index Alpha](https://indexalpha.id/docs/endpoints) | Net foreign buy ≥ 3 hari berturut-turut (dalam 5 hari terakhir), Top-3 broker pembeli ≥ 50% volume (agregat 5 hari) |
+| 4. Risiko | — | SL = entry − 1.5×ATR14, TP1 = 1:1.5, TP2 = 1:3, lot = min(2% modal ÷ risiko per lembar, modal ÷ harga) |
+
+Gate teknikal dijalankan dulu, jadi kuota Index Alpha hanya terpakai untuk saham yang lolos (≈6 unit per saham per run: 5 foreign-flow harian + 1 broker summary).
+
+**Aktifkan workflow:** pindahkan `deploy/bot.yml` ke `.github/workflows/bot.yml`, lalu hapus `.github/workflows/run-bot.yml` (workflow lama itu menjalankan `scanner.py` tiap jam, padahal file itu tidak punya entrypoint, jadi tidak melakukan apa pun). Bisa lewat GitHub web (Add file → Create new file) atau:
+
+```bash
+git mv deploy/bot.yml .github/workflows/bot.yml
+git rm .github/workflows/run-bot.yml
+git commit -m "ci: enable institutional bot workflow" && git push
+```
+
+**Catatan data:** Index Alpha memperbarui data setiap hari bursa pukul 19:00 WIB, jadi run 12:05 & 16:15 memakai flow sampai hari bursa sebelumnya. Pada run 12:05 volume hari ini baru setengah hari, sehingga RVOL ≥ 2x di sesi I berarti lonjakan yang sangat kuat.
+
+### Setup Secrets
+
+1. Buka repo di GitHub → **Settings → Secrets and variables → Actions → New repository secret**.
+2. Tambahkan:
+   - `TELEGRAM_BOT_TOKEN` — token dari @BotFather
+   - `TELEGRAM_CHAT_ID` — ID chat/grup (mis. `-1001234567890`, atau `-1001234567890:123` untuk topic)
+   - `INDEX_ALPHA_API_KEY` — token dari dashboard Index Alpha
+   - `PORTFOLIO_CAPITAL` — opsional, default `100000000`
+3. Opsional, di tab **Variables**: `BEAR_MODE` = `hold` atau `warn`.
+
+### Uji workflow
+
+1. Tab **Actions → Institutional IDX Signal Bot → Run workflow**.
+2. Centang **Dry run** untuk melihat pesan di log tanpa mengirim ke Telegram; jalankan lagi tanpa centang untuk kirim sungguhan.
+3. Lokal: `INDEX_ALPHA_API_KEY=... python institutional_bot.py --dry-run`.
+4. Unit test offline (tanpa API): `pip install pytest && python -m pytest tests/`.
+
+Parameter lain bisa diubah lewat env: `RISK_PER_TRADE_PCT`, `ADTV_MIN_RP`, `RVOL_MIN`, `ATR_SL_MULT`, `TP1_RR`, `TP2_RR`, `FOREIGN_LOOKBACK_DAYS`, `FOREIGN_MIN_STREAK`, `BROKER_TOP_N`, `BROKER_MIN_SHARE_PCT`, `MAX_SIGNALS`, `SEND_EMPTY_REPORT`, `UNIVERSE` (daftar ticker dipisah koma; default universe dari `scanner.py`).
+
+---
+
 ## Files
 
 ```
 stock-trading/
   scanner.py              Core logic — 3-category scoring, TradingView backend, portfolio tracking
   bot.py                  Telegram bot — commands, morning report, price alerts
+  institutional_bot.py    One-shot institutional scanner (GitHub Actions, Index Alpha + yfinance)
+  deploy/bot.yml          GitHub Actions workflow for institutional_bot.py (move to .github/workflows/)
   signal_generator.py     CLI runner — writes signals_latest.md
   backtest.py             Strategy backtester and capital simulator (yfinance)
   backtest_compare.py     Backtest variant comparing scoring configs
