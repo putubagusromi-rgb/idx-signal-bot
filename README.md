@@ -286,18 +286,13 @@ Note: Railway's free trial expired for this project in Aug 2026 — the bot move
 |------|--------|--------|
 | 1. Macro | yfinance `^JKSE` | IHSG < EMA50 → HIGH-RISK. Default `BEAR_MODE=hold` (signal ditahan, hanya laporan); `warn` = tetap kirim dengan label high-risk |
 | 2. Teknikal | yfinance | ADTV 5 hari > Rp10 M, RVOL ≥ 2x (vs rerata 20 hari), harga > EMA20 & EMA50, ATR14 > ATR14 5 hari lalu dan > rerata 20 hari |
-| 3. Smart money | [Index Alpha](https://indexalpha.id/docs/endpoints) | Net foreign buy ≥ 3 hari berturut-turut (dalam 5 hari terakhir), Top-3 broker pembeli ≥ 50% volume (agregat 5 hari) |
+| 3. Smart money | [Index Alpha](https://indexalpha.id/docs/endpoints) (jika ada key) | Net foreign buy ≥ 3 hari berturut-turut (dalam 5 hari terakhir), Top-3 broker pembeli ≥ 50% volume (agregat 5 hari) |
+| 3. Smart money (gratis) | yfinance | Tanpa key, atau jika Index Alpha error/kuota habis: proxy akumulasi, yaitu CMF20 ≥ 0.10, OBV naik dalam 5 hari, dan ≥ 3 dari 5 hari terakhir ditutup naik |
 | 4. Risiko | — | SL = entry − 1.5×ATR14, TP1 = 1:1.5, TP2 = 1:3, lot = min(2% modal ÷ risiko per lembar, modal ÷ harga) |
 
+**Mode gratis vs Index Alpha:** Yahoo Finance tidak menyediakan data foreign flow maupun broker summary, jadi mode gratis memakai proxy dari harga dan volume. Proxy ini bukan data institusi asli, dan pesan Telegram menandainya dengan "mode gratis". `INDEX_ALPHA_API_KEY` bersifat opsional.
+
 Gate teknikal dijalankan dulu, jadi kuota Index Alpha hanya terpakai untuk saham yang lolos (≈6 unit per saham per run: 5 foreign-flow harian + 1 broker summary).
-
-**Aktifkan workflow:** pindahkan `deploy/bot.yml` ke `.github/workflows/bot.yml`, lalu hapus `.github/workflows/run-bot.yml` (workflow lama itu menjalankan `scanner.py` tiap jam, padahal file itu tidak punya entrypoint, jadi tidak melakukan apa pun). Bisa lewat GitHub web (Add file → Create new file) atau:
-
-```bash
-git mv deploy/bot.yml .github/workflows/bot.yml
-git rm .github/workflows/run-bot.yml
-git commit -m "ci: enable institutional bot workflow" && git push
-```
 
 **Catatan data:** Index Alpha memperbarui data setiap hari bursa pukul 19:00 WIB, jadi run 12:05 & 16:15 memakai flow sampai hari bursa sebelumnya. Pada run 12:05 volume hari ini baru setengah hari, sehingga RVOL ≥ 2x di sesi I berarti lonjakan yang sangat kuat.
 
@@ -307,7 +302,7 @@ git commit -m "ci: enable institutional bot workflow" && git push
 2. Tambahkan:
    - `TELEGRAM_BOT_TOKEN` — token dari @BotFather
    - `TELEGRAM_CHAT_ID` — ID chat/grup (mis. `-1001234567890`, atau `-1001234567890:123` untuk topic)
-   - `INDEX_ALPHA_API_KEY` — token dari dashboard Index Alpha
+   - `INDEX_ALPHA_API_KEY` — opsional, token dari https://indexalpha.id/dashboard (login Google). Paket Free hanya 5 request/hari; Starter (25.000/bulan) cukup untuk bot ini
    - `PORTFOLIO_CAPITAL` — opsional, default `100000000`
 3. Opsional, di tab **Variables**: `BEAR_MODE` = `hold` atau `warn`.
 
@@ -315,10 +310,10 @@ git commit -m "ci: enable institutional bot workflow" && git push
 
 1. Tab **Actions → Institutional IDX Signal Bot → Run workflow**.
 2. Centang **Dry run** untuk melihat pesan di log tanpa mengirim ke Telegram; jalankan lagi tanpa centang untuk kirim sungguhan.
-3. Lokal: `INDEX_ALPHA_API_KEY=... python institutional_bot.py --dry-run`.
+3. Lokal: `python institutional_bot.py --dry-run` (mode gratis) atau `INDEX_ALPHA_API_KEY=... python institutional_bot.py --dry-run`.
 4. Unit test offline (tanpa API): `pip install pytest && python -m pytest tests/`.
 
-Parameter lain bisa diubah lewat env: `RISK_PER_TRADE_PCT`, `ADTV_MIN_RP`, `RVOL_MIN`, `ATR_SL_MULT`, `TP1_RR`, `TP2_RR`, `FOREIGN_LOOKBACK_DAYS`, `FOREIGN_MIN_STREAK`, `BROKER_TOP_N`, `BROKER_MIN_SHARE_PCT`, `MAX_SIGNALS`, `SEND_EMPTY_REPORT`, `UNIVERSE` (daftar ticker dipisah koma; default universe dari `scanner.py`).
+Parameter lain bisa diubah lewat env: `RISK_PER_TRADE_PCT`, `ADTV_MIN_RP`, `RVOL_MIN`, `ATR_SL_MULT`, `TP1_RR`, `TP2_RR`, `FOREIGN_LOOKBACK_DAYS`, `FOREIGN_MIN_STREAK`, `BROKER_TOP_N`, `BROKER_MIN_SHARE_PCT`, `CMF_MIN`, `ACCUMULATION_MIN_DAYS`, `MAX_SIGNALS`, `SEND_EMPTY_REPORT`, `UNIVERSE` (daftar ticker dipisah koma; default universe dari `scanner.py`).
 
 ---
 
@@ -329,7 +324,7 @@ stock-trading/
   scanner.py              Core logic — 3-category scoring, TradingView backend, portfolio tracking
   bot.py                  Telegram bot — commands, morning report, price alerts
   institutional_bot.py    One-shot institutional scanner (GitHub Actions, Index Alpha + yfinance)
-  deploy/bot.yml          GitHub Actions workflow for institutional_bot.py (move to .github/workflows/)
+  .github/workflows/bot.yml  GitHub Actions schedule for institutional_bot.py (12:05 & 16:15 WIB)
   signal_generator.py     CLI runner — writes signals_latest.md
   backtest.py             Strategy backtester and capital simulator (yfinance)
   backtest_compare.py     Backtest variant comparing scoring configs

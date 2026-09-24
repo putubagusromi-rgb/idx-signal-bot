@@ -8,12 +8,16 @@ Pipeline (cheapest gates first so Index Alpha quota is only spent on survivors):
   1. Macro gate      — IHSG (^JKSE) vs EMA50 via yfinance.
   2. Execution gate  — ADTV5 > Rp10B, RVOL >= 2x, price > EMA20 & EMA50,
                        ATR14 expanding (yfinance daily bars).
-  3. Money-flow gate — Index Alpha: net foreign buy >= 3 consecutive days
-                       (within last 5) and Top-3 buyer brokers >= 50% volume.
+  3. Money-flow gate — Index Alpha (if INDEX_ALPHA_API_KEY is set): net foreign
+                       buy >= 3 consecutive days (within last 5) and Top-3 buyer
+                       brokers >= 50% volume.
+                       Free mode (no key, or Index Alpha fails): accumulation
+                       proxy from yfinance — CMF20 >= 0.10, OBV rising over
+                       5 days, >= 3 up-closes in the last 5 sessions.
   4. Risk model      — SL = entry - 1.5*ATR14, TP1 1:1.5, TP2 1:3,
                        lot sizing at 2% portfolio risk.
 
-Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, INDEX_ALPHA_API_KEY,
+Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, INDEX_ALPHA_API_KEY (optional),
      PORTFOLIO_CAPITAL (default 100000000). Optional tuning vars in Config.
 
 Usage:
@@ -76,6 +80,8 @@ class Config:
     ff_min_streak: int
     broker_top_n: int
     broker_min_share: float
+    cmf_min: float
+    acc_min_days: int
     max_signals: int
     bear_mode: str          # "hold" = suppress signals, "warn" = send with warning
     send_empty_report: bool
@@ -104,6 +110,8 @@ class Config:
             ff_min_streak=_env_int("FOREIGN_MIN_STREAK", 3),
             broker_top_n=_env_int("BROKER_TOP_N", 3),
             broker_min_share=_env_float("BROKER_MIN_SHARE_PCT", 50) / 100,
+            cmf_min=_env_float("CMF_MIN", 0.10),
+            acc_min_days=_env_int("ACCUMULATION_MIN_DAYS", 3),
             max_signals=_env_int("MAX_SIGNALS", 5),
             bear_mode=bear_mode,
             send_empty_report=(os.getenv("SEND_EMPTY_REPORT") or "true").strip().lower() != "false",
@@ -371,6 +379,37 @@ def smart_money_gate(client, tickers, days, cfg):
     return passed
 
 
+# ── Gate 2 (free mode): accumulation proxy from price/volume ──────────────────
+
+def cmf(df, period=20):
+    """Chaikin Money Flow: volume-weighted close location within the bar's range."""
+    rng = (df["High"] - df["Low"]).replace(0, float("nan"))
+    mfm = (((df["Close"] - df["Low"]) - (df["High"] - df["Close"])) / rng).fillna(0)
+    mfv = mfm * df["Volume"]
+    return mfv.rolling(period).sum() / df["Volume"].rolling(period).sum()
+
+
+def obv(df):
+    direction = df["Close"].diff().fillna(0).apply(lambda x: (x > 0) - (x < 0))
+    return (direction * df["Volume"]).cumsum()
+
+
+def accumulation_proxy_gate(history, tickers, cfg):
+    """Free substitute for foreign/broker data. Not real institutional flow."""
+    passed = {}
+    for t in tickers:
+        df = history.get(f"{t}.JK")
+        if df is None or len(df) < 30:
+            continue
+        cmf_now = float(cmf(df).iloc[-1])
+        o = obv(df)
+        obv_rising = float(o.iloc[-1]) > float(o.iloc[-6])
+        up_days = int((df["Close"].diff().iloc[-5:] > 0).sum())
+        if cmf_now >= cfg.cmf_min and obv_rising and up_days >= cfg.acc_min_days:
+            passed[t] = {"proxy": True, "cmf": cmf_now, "up_days": up_days}
+    return passed
+
+
 # ── Gate 4: Risk model ────────────────────────────────────────────────────────
 
 def risk_plan(tech, cfg):
@@ -408,6 +447,20 @@ def fmt_date(dt):
 def format_signal(sig, regime, cfg, now_wib):
     e = html.escape
     t, flow, plan = sig["ticker"], sig["flow"], sig["plan"]
+    if flow.get("proxy"):
+        flow_lines = [
+            "• <b>Foreign Flow:</b> n/a (mode gratis, tanpa data broker)",
+            f"• <b>Accumulation Proxy:</b> CMF20 {flow['cmf']:+.2f}, OBV naik, "
+            f"{flow['up_days']}/5 hari ditutup naik",
+        ]
+    else:
+        flow_lines = [
+            f"• <b>Foreign Flow:</b> Net Buy {flow['ff_streak']} hari berturut-turut "
+            f"(Σ {rp_short(flow['ff_net'])})",
+            f"• <b>Broker Concentration:</b> Top {len(flow['broker_top'])} Buyer "
+            f"({e(', '.join(flow['broker_top']))}) = {flow['broker_share'] * 100:.1f}% volume "
+            f"— Big Accumulation",
+        ]
     lines = [
         "🏛️ <b>INSTITUTIONAL SIGNAL | IDX SWING</b> 🏛️",
         "",
@@ -418,11 +471,7 @@ def format_signal(sig, regime, cfg, now_wib):
         f"• IHSG Status: {e(regime['status'])}",
         "",
         "📊 <b>SMART MONEY &amp; ORDER FLOW INSIGHT:</b>",
-        f"• <b>Foreign Flow:</b> Net Buy {flow['ff_streak']} hari berturut-turut "
-        f"(Σ {rp_short(flow['ff_net'])})",
-        f"• <b>Broker Concentration:</b> Top {len(flow['broker_top'])} Buyer "
-        f"({e(', '.join(flow['broker_top']))}) = {flow['broker_share'] * 100:.1f}% volume "
-        f"— Big Accumulation",
+        *flow_lines,
         f"• <b>RVOL (Volume Spike):</b> {sig['tech']['rvol']:.2f}x (High Liquidity, "
         f"ADTV5 {rp_short(sig['tech']['adtv'])})",
         "",
@@ -454,7 +503,7 @@ def format_summary(regime, stats, now_wib, note=None):
         f"🌐 IHSG Status: {e(regime['status'])}",
         f"🔎 Universe: {stats['universe']} | Data OK: {stats['with_data']}",
         f"📈 Lolos teknikal &amp; likuiditas: {stats['technical']}",
-        f"🏦 Lolos smart money flow: {stats['flow']}",
+        f"🏦 Lolos smart money flow: {stats['flow']} ({e(stats.get('flow_source', 'Index Alpha'))})",
         f"🎯 Signal dikirim: {stats['signals']}",
     ]
     if stats.get("flow_days"):
@@ -488,7 +537,7 @@ def send_telegram(cfg, text):
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def run(cfg, now_wib, client, is_scheduled=False):
-    """Run the full pipeline. Returns list of Telegram messages (HTML)."""
+    """Run the full pipeline. client=None selects free proxy mode. Returns HTML messages."""
     symbols = [f"{t}.JK" for t in cfg.universe]
     history = download_history([IHSG_SYMBOL] + symbols)
     ihsg = history.get(IHSG_SYMBOL)
@@ -520,9 +569,20 @@ def run(cfg, now_wib, client, is_scheduled=False):
     stats["technical"] = len(technical)
     logger.info("Technical survivors (%d): %s", len(technical), ", ".join(technical))
 
-    days = flow_trading_days(ihsg.index, now_wib, cfg.ff_lookback_days)
-    stats["flow_days"] = days
-    flows = smart_money_gate(client, list(technical), days, cfg)
+    notes = []
+    flows = None
+    if client is not None:
+        days = flow_trading_days(ihsg.index, now_wib, cfg.ff_lookback_days)
+        try:
+            flows = smart_money_gate(client, list(technical), days, cfg)
+            stats["flow_days"] = days
+            stats["flow_source"] = "Index Alpha"
+        except IndexAlphaError as e:
+            logger.error("Index Alpha failed, falling back to free proxy: %s", e)
+            notes.append(f"⚠️ Index Alpha gagal ({str(e)[:120]}) — memakai proxy akumulasi gratis.")
+    if flows is None:
+        flows = accumulation_proxy_gate(history, list(technical), cfg)
+        stats["flow_source"] = "proxy gratis: CMF/OBV"
     stats["flow"] = len(flows)
     logger.info("Smart-money survivors (%d): %s", len(flows), ", ".join(flows))
 
@@ -542,8 +602,9 @@ def run(cfg, now_wib, client, is_scheduled=False):
         sig["sector"] = fetch_sector(f"{sig['ticker']}.JK")
         messages.append(format_signal(sig, regime, cfg, now_wib))
     if signals or cfg.send_empty_report:
-        note = None if signals else "Tidak ada saham yang lolos seluruh filter institusional hari ini."
-        messages.insert(0, format_summary(regime, stats, now_wib, note))
+        if not signals:
+            notes.append("Tidak ada saham yang lolos seluruh filter institusional hari ini.")
+        messages.insert(0, format_summary(regime, stats, now_wib, "\n".join(notes) or None))
     return messages
 
 
@@ -554,25 +615,19 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     cfg = Config.from_env()
-    required = [("INDEX_ALPHA_API_KEY", cfg.index_alpha_key)]
     if not args.dry_run:
-        required += [("TELEGRAM_BOT_TOKEN", cfg.telegram_token),
-                     ("TELEGRAM_CHAT_ID", cfg.telegram_chat_id)]
-    missing = [name for name, value in required if not value]
-    if missing:
-        logger.error("Missing required env vars: %s", ", ".join(missing))
-        return 1
+        required = [("TELEGRAM_BOT_TOKEN", cfg.telegram_token),
+                    ("TELEGRAM_CHAT_ID", cfg.telegram_chat_id)]
+        missing = [name for name, value in required if not value]
+        if missing:
+            logger.error("Missing required env vars: %s", ", ".join(missing))
+            return 1
 
     now_wib = datetime.now(WIB)
     is_scheduled = os.getenv("GITHUB_EVENT_NAME") == "schedule"
-    client = IndexAlphaClient(cfg.index_alpha_key)
-    try:
-        messages = run(cfg, now_wib, client, is_scheduled)
-    except IndexAlphaError as e:
-        logger.error("Index Alpha error: %s", e)
-        if not args.dry_run:
-            send_telegram(cfg, f"⚠️ <b>Institutional bot error</b>\nIndex Alpha: {html.escape(str(e))}")
-        return 1
+    client = IndexAlphaClient(cfg.index_alpha_key) if cfg.index_alpha_key else None
+    logger.info("Flow source: %s", "Index Alpha" if client else "free accumulation proxy")
+    messages = run(cfg, now_wib, client, is_scheduled)
 
     for msg in messages:
         if args.dry_run:
