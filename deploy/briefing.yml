@@ -1,0 +1,61 @@
+name: IDX Morning Briefing & BSJP
+
+on:
+  schedule:
+    # GitHub cron is UTC (WIB = UTC+7) and often starts 5–20 min late, so runs are scheduled early.
+    - cron: '45 0 * * 1-5'   # 07:45 WIB — morning briefing (arrives ~08:00)
+    - cron: '0 8 * * 1-5'    # 15:00 WIB — BSJP picks, before pre-closing 15:50
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Which report'
+        type: choice
+        options: [morning, bsjp]
+        default: morning
+      dry_run:
+        description: 'Dry run (print to log, do not send to Telegram)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: briefing-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run briefing
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCHEDULE: ${{ github.event.schedule }}
+          MODE_INPUT: ${{ inputs.mode }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          MODE="$MODE_INPUT"
+          if [ -z "$MODE" ]; then
+            if [ "$SCHEDULE" = "0 8 * * 1-5" ]; then MODE=bsjp; else MODE=morning; fi
+          fi
+          ARGS="$MODE"
+          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          python briefing_bot.py $ARGS

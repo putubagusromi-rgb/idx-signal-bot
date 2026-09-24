@@ -317,12 +317,37 @@ Parameter lain bisa diubah lewat env: `RISK_PER_TRADE_PCT`, `ADTV_MIN_RP`, `RVOL
 
 ---
 
+## Morning Briefing & BSJP/BPJS (GitHub Actions, gratis)
+
+`briefing_bot.py` mengirim dua laporan setiap hari bursa, hanya memakai data Yahoo Finance:
+
+| Waktu | Mode | Isi |
+|-------|------|-----|
+| ~08:00 WIB (cron 07:45) | `morning` | IHSG Executive Summary (bias, support/resistance, breadth), instruksi exit BSJP kemarin sore, BSJP Scorecard (siklus terakhir + kumulatif), Smart Money Tracker, BPJS watchlist hari ini |
+| ~15:00 WIB | `bsjp` | Kandidat BSJP (beli pre-closing, jual besok pagi) |
+
+**Kriteria**
+- **BSJP:** naik 1–7%, ditutup di ≥70% range harian, volume ≥ 1,5x rerata 20 hari, di atas EMA20, CMF20 > 0, dan nilai transaksi ≥ Rp5 M. Level (HIGH/MEDIUM/LOW) naik untuk tiap poin tambahan: volume ≥ 2,5x, close ≥ 90% range, CMF ≥ 0,15, money flow 5 hari positif, di atas EMA50. TP = entry + 0,5×ATR, SL = entry − 0,35×ATR.
+- **BPJS:** close > EMA20 > EMA50, ditutup di ≥60% range, volume ≥ 1,2x, CMF > 0,05, ATR ≥ 2% dari harga. TP +0,6×ATR, SL −0,4×ATR.
+- **Smart Money Tracker:** CMF > 0,05, OBV naik dalam 10 hari, harga −5% sampai +1% dari VWAP 10 hari, dan minimal 1 hari absorpsi dalam 10 hari. Hari absorpsi berarti volume ≥ 1,5x, perubahan harga ≤ 1%, dan close di separuh atas range.
+- **Scorecard:** tanpa database. Setiap pagi, screen BSJP dijalankan ulang pada data penutupan hari-hari sebelumnya, lalu dinilai dengan bar hari berikutnya. Sinyal sore yang live memakai data intraday, jadi hasilnya bisa sedikit berbeda.
+
+Money flow di sini diestimasi dari harga dan volume (CMF, OBV, signed value flow, VWAP), bukan data broker atau asing.
+
+**Aktifkan:** buat file baru `.github/workflows/briefing.yml` dengan isi `deploy/briefing.yml`. Uji dari tab Actions → **IDX Morning Briefing & BSJP** → Run workflow (pilih mode, centang Dry run). Lokal: `python briefing_bot.py morning --dry-run`.
+
+Parameter lewat env: `BRIEF_MIN_VALUE_RP`, `BSJP_MAX`, `BPJS_MAX`, `TRACKER_MAX`, `SCORECARD_DAYS`, `BSJP_MIN_CHG_PCT`, `BSJP_MAX_CHG_PCT`, `BSJP_TP_ATR`, `BSJP_SL_ATR`, `BPJS_TP_ATR`, `BPJS_SL_ATR`.
+
+---
+
 ## Files
 
 ```
 stock-trading/
   scanner.py              Core logic — 3-category scoring, TradingView backend, portfolio tracking
   bot.py                  Telegram bot — commands, morning report, price alerts
+  briefing_bot.py        Morning briefing (08:00) + BSJP picks (15:00), yfinance only
+  deploy/briefing.yml     Workflow for briefing_bot.py (copy to .github/workflows/)
   institutional_bot.py    One-shot institutional scanner (GitHub Actions, Index Alpha + yfinance)
   .github/workflows/bot.yml  GitHub Actions schedule for institutional_bot.py (12:05 & 16:15 WIB)
   signal_generator.py     CLI runner — writes signals_latest.md
