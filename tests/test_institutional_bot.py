@@ -33,6 +33,14 @@ def make_df(n=80, base=1000.0, last_vol_mult=3.0, breakout=True):
     }, index=idx)
 
 
+def near_high(df):
+    """Shift each bar so the close sits near its high (buying pressure), keeping range width."""
+    rng = df["High"] - df["Low"]
+    df["High"] = df["Close"] + rng * 0.05
+    df["Low"] = df["Close"] - rng * 0.95
+    return df
+
+
 def test_tick_rounding():
     assert b.idx_tick(199) == 1 and b.idx_tick(499) == 2 and b.idx_tick(1999) == 5
     assert b.idx_tick(4999) == 10 and b.idx_tick(5000) == 25
@@ -125,3 +133,40 @@ def test_signal_message_renders(cfg):
     assert "HIGH-RISK MODE" in msg and "<code>$BBCA</code>" in msg
     assert "Rp 6.225" in msg and "Kamis, 24 Sep 2026 16:15 WIB" in msg
     assert len(msg) < b.TELEGRAM_MAX_LEN
+
+
+def test_accumulation_proxy_gate(cfg):
+    up = near_high(make_df())
+    down = make_df(breakout=False)
+    out = b.accumulation_proxy_gate({"UPPP.JK": up, "DOWN.JK": down}, ["UPPP", "DOWN", "MISS"], cfg)
+    assert list(out) == ["UPPP"]
+    assert out["UPPP"]["proxy"] is True and out["UPPP"]["cmf"] >= cfg.cmf_min
+
+
+def test_proxy_signal_message(cfg):
+    sig = {
+        "ticker": "TLKM", "sector": "Communication Services",
+        "tech": {"price": 2390.0, "rvol": 2.1, "adtv": 3e11},
+        "flow": {"proxy": True, "cmf": 0.21, "up_days": 4},
+        "plan": b.risk_plan({"price": 2390.0, "ema20": 2350.0, "atr": 60.0}, cfg),
+    }
+    msg = b.format_signal(sig, {"bullish": True, "status": "🟢 UPTREND"}, cfg,
+                          datetime(2026, 9, 24, 12, 5, tzinfo=b.WIB))
+    assert "mode gratis" in msg and "CMF20 +0.21" in msg and "4/5" in msg
+
+
+def test_index_alpha_failure_falls_back_to_proxy(cfg, monkeypatch):
+    idx = pd.bdate_range(end="2026-09-23", periods=80)
+    ihsg = pd.DataFrame({"Open": 1, "High": 1, "Low": 1, "Close": np.linspace(6000, 7000, 80)}, index=idx)
+    stock = near_high(make_df())
+    monkeypatch.setattr(b, "download_history", lambda syms: {b.IHSG_SYMBOL: ihsg, "UPPP.JK": stock})
+    monkeypatch.setattr(b, "fetch_sector", lambda s: "Test")
+
+    class Broken:
+        def foreign_flow(self, *a):
+            raise b.IndexAlphaError("/foreign-flow/batch -> HTTP 403: quota")
+
+    cfg = dataclasses.replace(cfg, universe=("UPPP",))
+    msgs = b.run(cfg, datetime(2026, 9, 23, 16, 15, tzinfo=b.WIB), Broken())
+    assert "Index Alpha gagal" in msgs[0] and "proxy gratis" in msgs[0]
+    assert len(msgs) == 2 and "mode gratis" in msgs[1]
