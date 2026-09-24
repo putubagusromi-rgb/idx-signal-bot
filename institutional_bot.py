@@ -503,7 +503,7 @@ def format_summary(regime, stats, now_wib, note=None):
         f"🌐 IHSG Status: {e(regime['status'])}",
         f"🔎 Universe: {stats['universe']} | Data OK: {stats['with_data']}",
         f"📈 Lolos teknikal &amp; likuiditas: {stats['technical']}",
-        f"🏦 Lolos smart money flow: {stats['flow']} ({e(stats.get('flow_source', 'Index Alpha'))})",
+        f"🏦 Lolos smart money flow: {stats['flow']} ({e(stats['flow_source'])})",
         f"🎯 Signal dikirim: {stats['signals']}",
     ]
     if stats.get("flow_days"):
@@ -551,7 +551,8 @@ def run(cfg, now_wib, client, is_scheduled=False):
     regime = market_regime(ihsg)
     logger.info("Regime: %s", regime["status"])
     stats = {"universe": len(cfg.universe), "with_data": len(history) - 1,
-             "technical": 0, "flow": 0, "signals": 0}
+             "technical": 0, "flow": 0, "signals": 0,
+             "flow_source": "Index Alpha" if client is not None else "proxy gratis: CMF/OBV"}
 
     if not regime["bullish"] and cfg.bear_mode == "hold":
         note = ("Signal DITAHAN: IHSG di bawah EMA50 (downtrend). "
@@ -576,7 +577,6 @@ def run(cfg, now_wib, client, is_scheduled=False):
         try:
             flows = smart_money_gate(client, list(technical), days, cfg)
             stats["flow_days"] = days
-            stats["flow_source"] = "Index Alpha"
         except IndexAlphaError as e:
             logger.error("Index Alpha failed, falling back to free proxy: %s", e)
             notes.append(f"⚠️ Index Alpha gagal ({str(e)[:120]}) — memakai proxy akumulasi gratis.")

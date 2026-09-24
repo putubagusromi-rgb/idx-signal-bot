@@ -170,3 +170,11 @@ def test_index_alpha_failure_falls_back_to_proxy(cfg, monkeypatch):
     msgs = b.run(cfg, datetime(2026, 9, 23, 16, 15, tzinfo=b.WIB), Broken())
     assert "Index Alpha gagal" in msgs[0] and "proxy gratis" in msgs[0]
     assert len(msgs) == 2 and "mode gratis" in msgs[1]
+
+
+def test_hold_report_names_free_source(cfg, monkeypatch):
+    idx = pd.bdate_range(end="2026-09-23", periods=80)
+    ihsg = pd.DataFrame({"Open": 1, "High": 1, "Low": 1, "Close": np.linspace(7000, 6000, 80)}, index=idx)
+    monkeypatch.setattr(b, "download_history", lambda syms: {b.IHSG_SYMBOL: ihsg})
+    msgs = b.run(cfg, datetime(2026, 9, 23, 16, 15, tzinfo=b.WIB), None)
+    assert "DITAHAN" in msgs[0] and "proxy gratis" in msgs[0] and "Index Alpha" not in msgs[0]
