@@ -170,3 +170,28 @@ def test_index_alpha_failure_falls_back_to_proxy(cfg, monkeypatch):
     msgs = b.run(cfg, datetime(2026, 9, 23, 16, 15, tzinfo=b.WIB), Broken())
     assert "Index Alpha gagal" in msgs[0] and "proxy gratis" in msgs[0]
     assert len(msgs) == 2 and "mode gratis" in msgs[1]
+
+
+def test_hold_report_names_free_source(cfg, monkeypatch):
+    idx = pd.bdate_range(end="2026-09-23", periods=80)
+    ihsg = pd.DataFrame({"Open": 1, "High": 1, "Low": 1, "Close": np.linspace(7000, 6000, 80)}, index=idx)
+    monkeypatch.setattr(b, "download_history", lambda syms: {b.IHSG_SYMBOL: ihsg})
+    msgs = b.run(cfg, datetime(2026, 9, 23, 16, 15, tzinfo=b.WIB), None)
+    assert "DITAHAN" in msgs[0] and "proxy gratis" in msgs[0] and "Index Alpha" not in msgs[0]
+
+
+def test_send_telegram_logs_destination(cfg, monkeypatch, caplog):
+    class Resp:
+        ok, status_code = True, 200
+
+        def json(self):
+            return {"ok": True, "result": {"chat": {"type": "supergroup", "title": "IDX Traders"},
+                                           "message_thread_id": 7}}
+
+    sent = {}
+    monkeypatch.setattr(b.requests, "post", lambda url, json, timeout: sent.update(json) or Resp())
+    cfg = dataclasses.replace(cfg, telegram_token="x", telegram_chat_id="-1001:7")
+    with caplog.at_level("INFO", logger="institutional_bot"):
+        b.send_telegram(cfg, "hi")
+    assert sent["chat_id"] == "-1001" and sent["message_thread_id"] == 7
+    assert "supergroup 'IDX Traders' (topic: 7)" in caplog.text
